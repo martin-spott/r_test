@@ -1,0 +1,182 @@
+---
+title: "Exercise Sheet 12 -- Data Mining <BR> Wirtschaftsinformatik, HTW Berlin"
+author: "Martin Spott"
+date: "last revision `r format(Sys.Date(), format='%d %B %Y')`"
+output:
+  pdf_document: default
+  html_document: default
+always_allow_html: yes
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+options(width = 1000)
+```
+
+This exercise explores **frequent itemset mining** and **association rule mining**. One of the first uses of these techniques was market basket analysis, i.e. the question, what people are frequently buying at the same time in a market. An *itemset* is simply a set $\{ \textit{item}_1, \textit{item}_2, \textit{item}_3 \ldots \}$ of items like $\{ \textit{wine, cheese, baguette} \}$ in a shoppers basket. An *association rule* is an if-then-rule like $\{ \textit{wine, cheese, baguette} \} \longrightarrow \{ \textit{butter}\}$ reading *if we have wine, cheese and a baguette in our basket, we will also have butter*. 
+
+In the following, we apply these techniques the Titanic data set as to analyse the relationship between features. For instance, we can look for groups of passengers with particularly high or low probabilities of survival. 
+
+```{r, warning=FALSE, message=FALSE}
+library(arules)
+library(arulesViz)
+library(plotly)
+
+load("titanic.raw.rdata")
+
+# look at a small subset of the data
+set.seed(1)
+titanic_sample <- titanic.raw[sample(1:dim(titanic.raw)[1],12),]
+titanic_sample
+
+# find association rules with default settings
+rules <- apriori(titanic.raw)
+inspect(rules)
+```
+
+Note, that in case of a structured data set with features like the one above, items are values of features like *Class=2nd* or *Survived=Yes* as opposed to *bread* or *butter* in the market basket analysis in the introduction.  
+
+Next look for rules that tell us about the probability of survival.
+
+```{r, warning=FALSE}
+# rules with rhs containing "Survived" only
+rules <- apriori(titanic.raw,
+  parameter = list(minlen=1, supp=0.005, conf=0.6, target="rules"),
+  appearance = list(rhs=c("Survived=No", "Survived=Yes"),
+  default="lhs"),
+  control = list(verbose=FALSE))
+
+rules.sorted <- sort(rules, by="lift")
+inspect(rules.sorted)
+```
+
+We now look at frequent itemsets, i.e. frequent combinations of values. 
+
+```{r, warning=FALSE}
+# frequent itemsets
+itemsets <- apriori(titanic.raw,
+  parameter = list(minlen=1, supp=0.10, target="frequent itemsets"),
+  control = list(verbose=FALSE))
+
+itemsets.sorted <- sort(itemsets, by="support")
+inspect(itemsets.sorted)
+```
+## Measures associated with association rules and itemsets
+
+In the following,  $A$ and $B$ may be atomic items or itemsets.  
+
+$$\textit{support}(A) = P(A) := \frac{\textit{number of data points that contain } A}{\textit{total number of data points}}$$
+
+$$\textit{confidence}(A \rightarrow B) := P(B\,|\,A) = \frac{P(A,B)}{P(A)} $$
+
+$$\textit{lift}(A \rightarrow B) := \frac{P(B|A)}{P(B)} = \frac{P(A,B)}{P(A) P(B)}$$ 
+
+The definition of the support of a rule varies. We will use 
+$$\textit{support}(A \rightarrow B) := \textit{support}(A,B)$$
+that is the support of the left and right hand side of the rule combined. In some applications, using the support of just the left hand side of the rule is more sensible. 
+
+Depending on the application, people are often interested in the most frequent rules or itemsets (high support, many data points or cases), but sometimes very rare cases (low support) are more relevant as they may point to an anomaly. 
+
+High confidence values mean that the left hand side determines the right hand side at the level of the confidence. However, the right hand side may be valid at that level completely independently of the left hand side. For instance, let us assume there were only adults on the Titanic. We would find $\text{confidence(Crew} \rightarrow \text{Adult)} = P(\text{Adult}\,|\,\text{Crew}) = 1$, i.e. knowledge of somebody being crew fully determines his/her adulthood. However, since everybody is an adult, i.e. $P(\text{Adult}) = 1$, the person being a crew member has no influence on adulthood.
+
+In order to deal with this problem, we additionally use *lift* as a measure for the influence of the left on the right hand side. 
+
+A lift of 1 is not interesting (the left hand side has no influence on the right hand side as in the example above). A lift larger then 1 means that the left hand side increases the probability of the right hand side. Accordingly, a lift less than 1 means that the left hand side decreases the probability of the right hand side.
+
+Since association rule mining and frequent itemset mining typically produce a huge number of rules, much more than an analyst can handle, algorithms like *Apriori* allow to set minimum values for support and confidence. This also allows us to control the runtime of the methods. Furthermore the minimum and maximum number of items for a rule or an itemset can be set for the same reasons.   
+
+## Visualisation
+
+We can visualise support, confidence and lift of the rules in one scatter plot. 
+
+```{r}
+# static image with plot
+plot(rules)
+
+# interactive scatter plot with plotly, only visible in HTML, not in a PDF
+plotly_arules(rules)
+```
+
+
+The following are graph views of rules and itemsets, showing the relationship of items and the left and right hand side of rules. Such graphs get very busy and messy even with a relatively small number of rules/itemsets. For that reason, they are not so useful in most practical applications. We look at four rules and 20 itemsets below to demonstrate the technique.  
+
+```{r, message=FALSE, warning=FALSE, results=FALSE}
+
+# Visualisation
+plot(rules.sorted[1:4], method="graph")
+plot(itemsets.sorted[1:20], method="graph")
+
+
+```
+
+
+
+## Identify closed itemsets to detect redundancies in the results
+
+```{r}
+# look at some of the itemsets
+inspect(itemsets.sorted[8:17])
+```
+Note that some itemsets have the same support value like {Class=Crew,Sex=Male} and {Class=Crew,Sex=Male,Age=Adult}. Also, one is a subset of the other one. In this case we decide that the smaller set {Class=Crew,Sex=Male} is redundant since obviously all of the male crew are also adults and our itemsets should be as specific as possible. More generally, we usually only want to keep the so-called *closed* itemsets: 
+
+An itemset $A = \{A_1, A_2 ... A_n\}$ is called *closed* if and only if $P(A,B) < P(A)$ for all $B \notin A$. In other words, if you add an item to a closed itemset, then the support value will decrease.
+
+```{r}
+# closed frequent itemsets
+closed_itemsets <- apriori(titanic.raw,
+  parameter = list(minlen=1, supp=0.005, target="closed frequent itemsets"),
+  control = list(verbose=FALSE))
+
+closed_itemsets.sorted <- sort(closed_itemsets, by="support")
+inspect(closed_itemsets.sorted)
+```
+
+## Exercise
+
+Based on the small sample below, compute the support of the itemsets {Age=Adult}, {Age=Adult, Sex=Male}, {Age=Adult, Sex=Male, Survived=No} and {Age=Adult, Sex=Male, Survived=No, Class=Crew} by hand. Compare the values to the computed ones below for validation.  
+
+If we (wrongly) assume that these were the only itemsets: Which of these are closed itemsets? 
+
+Compute the support, the confidence and the lift of the rule {Crew,Male,Adult} $\rightarrow$ {No}. What do we learn from those values?
+
+```{r}
+titanic_sample
+
+# frequent itemsets
+itemsets <- apriori(titanic_sample,
+  parameter = list(minlen=1, supp=0.10, target="frequent itemsets"),
+  control = list(verbose=FALSE))
+
+itemsets.sorted <- sort(itemsets, by="support")
+inspect(itemsets.sorted)
+
+# rules
+rules <- apriori(titanic_sample,
+  parameter = list(minlen=1, supp=0.005, conf=0.6, target="rules"),
+  appearance = list(rhs=c("Survived=No", "Survived=Yes"),
+  default="lhs"),
+  control = list(verbose=FALSE))
+
+rules.sorted <- sort(rules, by="lift")
+inspect(rules.sorted)
+```
+
+
+
+## References
+* http://www.borgelt.net/teach/fpm_eng.html, you also find Christian's implementations of various machine learning algorithms on his web page. His code is used in the R package apriori as well as in some commercial software packages. 
+* http://www.rdatamining.com/docs/association-rule-mining-with-r
+* http://www.rdatamining.com/examples/association-rules
+
+
+
+
+
+
+
+
+
+
+
+
