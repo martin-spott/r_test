@@ -1,3 +1,3 @@
-install.packages(arules) 
-install.packages(arulesViz) 
-install.packages(plotly)
+install.packages("arules") 
+install.packages("arulesViz") 
+install.packages("plotly")
